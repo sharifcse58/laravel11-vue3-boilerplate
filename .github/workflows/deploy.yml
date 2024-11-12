@@ -1,0 +1,64 @@
+name: Deploy to Diwa VPS
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Test SSH Connection
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.ATS_HOST }}
+          username: ${{ secrets.ATS_USER }}
+          port: ${{ secrets.ATS_PORT }}
+          password: ${{ secrets.ATS_PASS }}
+          script: |
+            echo "Connection successful!"
+
+      - name: Copy files via SCP
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.ATS_HOST }}
+          username: ${{ secrets.ATS_USER }}
+          port: ${{ secrets.ATS_PORT }}
+          password: ${{ secrets.ATS_PASS }}
+          source: "."
+          target: "/var/www/html/diwa"
+
+      - name: Execute Laravel deployment commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.ATS_HOST }}
+          username: ${{ secrets.ATS_USER }}
+          port: ${{ secrets.ATS_PORT }}
+          password: ${{ secrets.ATS_PASS }}
+          script: |
+            cd /var/www/html/diwa
+            echo "Creating .env file if it doesn't exist..."
+            php -r "file_exists('.env') || copy('.env.example', '.env');"
+            echo "Executing composer install..."
+            composer install --no-interaction --prefer-dist --optimize-autoloader
+            echo "Generating key..."
+            php artisan key:generate --force
+            echo "Setting permissions..."
+            chmod -R 775 bootstrap/ storage/ public/
+            echo "Running migrations..."
+            php artisan migrate --force
+            echo "Clearing caches..."
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            echo "Deployment complete."
+            sudo chown -R www-data:www-data /var/www/html/diwa
+            sudo find /var/www/html/diwa -type f -exec chmod 664 {} \;
+            sudo find /var/www/html/diwa -type d -exec chmod 775 {} \;
+            sudo chgrp -R www-data /var/www/html/diwa/storage /var/www/html/diwa/bootstrap/cache
+            sudo chmod -R ug+rwx /var/www/html/diwa/storage /var/www/html/diwa/bootstrap/cache
